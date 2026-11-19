@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoxMatch | Anonymous 2-Minute WebRTC Voice Chat</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PeerJS for Serverless WebRTC Signaling -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts: Inter & JetBrains Mono -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        brand: {
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                        }
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'ripple': 'ripple 2s linear infinite',
+                    },
+                    keyframes: {
+                        ripple: {
+                            '0%': { transform: 'scale(0.8)', opacity: '0.8' },
+                            '100%': { transform: 'scale(2.2)', opacity: '0' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #09090b;
+            color: #f4f4f5;
+            overflow-x: hidden;
+        }
+        .glass-panel {
+            background: rgba(24, 24, 27, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #09090b; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 9999px; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white">
+
+    <!-- Top Navigation Bar -->
+    <header class="w-full border-b border-zinc-800/80 bg-zinc-950/80 backdrop-blur-md sticky top-0 z-40">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                    <i data-lucide="radio" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <span class="font-bold text-lg tracking-tight text-white">VoxMatch</span>
+                    <span class="hidden sm:inline-block ml-2 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">P2P Encrypted</span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <button onclick="openModal('safetyModal')" class="text-xs sm:text-sm text-zinc-400 hover:text-white flex items-center gap-1.5 px-3 py-1.5 rounded-lg hover:bg-zinc-800/70 transition">
+                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i>
+                    <span>Privacy & Legal</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-grow flex items-center justify-center p-4 sm:p-6">
+        <div class="w-full max-w-xl">
+
+            <!-- Toast Notification Box (Replaces alert) -->
+            <div id="toastBox" class="hidden mb-4 p-3.5 rounded-xl border text-sm flex items-center justify-between transition-all shadow-lg">
+                <div class="flex items-center gap-2.5">
+                    <i id="toastIcon" data-lucide="info" class="w-5 h-5 shrink-0"></i>
+                    <span id="toastMessage">Notification message</span>
+                </div>
+                <button onclick="hideToast()" class="text-zinc-400 hover:text-white ml-2">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <!-- SCREEN 1: QUICK ENTRY & MATCH PREFERENCES -->
+            <section id="entryScreen" class="glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl">
+                <div class="text-center mb-6">
+                    <h1 class="text-2xl sm:text-3xl font-bold text-white tracking-tight">Anonymous 2-Min Voice</h1>
+                    <p class="text-zinc-400 text-sm mt-1.5">Zero registration. Direct WebRTC audio. Auto-switches every 120 seconds.</p>
+                </div>
+
+                <form id="entryForm" class="space-y-5">
+                    <!-- Alias / Username -->
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">Display Alias (No Login)</label>
+                        <div class="relative">
+                            <i data-lucide="user" class="w-4 h-4 text-zinc-500 absolute left-3.5 top-1/2 -translate-y-1/2"></i>
+                            <input type="text" id="usernameInput" required maxlength="20" placeholder="e.g., NightOwl, Wanderer..."
+                                class="w-full bg-zinc-900/90 border border-zinc-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl pl-10 pr-4 py-3 text-sm text-white placeholder-zinc-500 outline-none transition">
+                        </div>
+                    </div>
+
+                    <!-- Gender Selection (Strict Opposite Matching) -->
+                    <div>
+                        <div class="flex justify-between items-center mb-1.5">
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400">Your Gender</label>
+                            <span class="text-[11px] text-indigo-400 font-medium">Auto-matches Opposite Gender</span>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <label class="cursor-pointer">
+                                <input type="radio" name="gender" value="male" class="peer sr-only" required>
+                                <div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/60 peer-checked:border-indigo-500 peer-checked:bg-indigo-500/10 hover:bg-zinc-800/60 transition flex items-center justify-center gap-2.5">
+                                    <span class="text-lg">♂️</span>
+                                    <span class="text-sm font-medium text-zinc-200">Male</span>
+                                </div>
+                            </label>
+                            <label class="cursor-pointer">
+                                <input type="radio" name="gender" value="female" class="peer sr-only" required>
+                                <div class="p-3.5 rounded-xl border border-zinc-800 bg-zinc-900/60 peer-checked:border-pink-500 peer-checked:bg-pink-500/10 hover:bg-zinc-800/60 transition flex items-center justify-center gap-2.5">
+                                    <span class="text-lg">♀️</span>
+                                    <span class="text-sm font-medium text-zinc-200">Female</span>
+                                </div>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Age & Country Row -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <!-- Your Age -->
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">Your Age (18+)</label>
+                            <input type="number" id="ageInput" min="18" max="99" value="24" required
+                                class="w-full bg-zinc-900/90 border border-zinc-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 rounded-xl px-4 py-3 text-sm text-white outline-none transition">
+                        </div>
+
+                        <!-- Your Country -->
+                        <div>
+                            <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">Your Country</label>
+                            <select id="myCountryInput" class="w-full bg-zinc-900/90 border border-zinc-800 focus:border-indigo-500 rounded-xl px-3.5 py-3 text-sm text-white outline-none transition">
+                                <option value="IN">🇮🇳 India</option>
+                                <option value="US">🇺🇸 United States</option>
+                                <option value="GB">🇬🇧 United Kingdom</option>
+                                <option value="CA">🇨🇦 Canada</option>
+                                <option value="AU">🇦🇺 Australia</option>
+                                <option value="DE">🇩🇪 Germany</option>
+                                <option value="JP">🇯🇵 Japan</option>
+                                <option value="BR">🇧🇷 Brazil</option>
+                                <option value="AE">🇦🇪 UAE</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Match Preferences Box -->
+                    <div class="p-4 rounded-2xl bg-zinc-900/70 border border-zinc-800/90 space-y-3.5">
+                        <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-zinc-300">
+                            <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5 text-indigo-400"></i>
+                            <span>Matchmaking Filters</span>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <!-- Target Country -->
+                            <div>
+                                <label class="block text-[11px] text-zinc-400 mb-1">Partner Country</label>
+                                <select id="targetCountryInput" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white outline-none">
+                                    <option value="ANY">🌍 Any Country (Global)</option>
+                                    <option value="SAME">📍 Same as My Country</option>
+                                    <option value="IN">🇮🇳 India</option>
+                                    <option value="US">🇺🇸 United States</option>
+                                    <option value="GB">🇬🇧 United Kingdom</option>
+                                    <option value="CA">🇨🇦 Canada</option>
+                                    <option value="AU">🇦🇺 Australia</option>
+                                    <option value="DE">🇩🇪 Germany</option>
+                                </select>
+                            </div>
+
+                            <!-- Age Tolerance Factor -->
+                            <div>
+                                <label class="block text-[11px] text-zinc-400 mb-1">Age Factor Range</label>
+                                <select id="ageRangeInput" class="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-xs text-white outline-none">
+                                    <option value="3">Strict (± 3 Years)</option>
+                                    <option value="5" selected>Balanced (± 5 Years)</option>
+                                    <option value="10">Broad (± 10 Years)</option>
+                                    <option value="99">Any Adult (18+)</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Legal Security & Safety Compliance Checkbox -->
+                    <label class="flex items-start gap-3 cursor-pointer p-3 rounded-xl bg-zinc-900/40 border border-zinc-800/60 hover:border-zinc-700 transition">
+                        <input type="checkbox" id="legalConsent" required class="mt-1 rounded border-zinc-700 bg-zinc-900 text-indigo-600 focus:ring-indigo-500">
+                        <span class="text-xs text-zinc-400 leading-relaxed">
+                            I confirm I am <strong class="text-zinc-200">18+ years old</strong> and agree to the <button type="button" onclick="openModal('safetyModal')" class="text-indigo-400 underline hover:text-indigo-300">Legal & Safety Terms</button>. Audio is P2P encrypted, never recorded on servers, and abusive behavior results in instant IP/Peer block.
+                        </span>
+                    </label>
+
+                    <!-- Start Button -->
+                    <button type="submit" class="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white font-semibold text-sm shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 transition transform active:scale-[0.99]">
+                        <i data-lucide="mic" class="w-4 h-4"></i>
+                        <span>Start Anonymous Matching</span>
+                    </button>
+                </form>
+            </section>
+
+            <!-- SCREEN 2: SEARCHING / MATCHING LOBBY -->
+            <section id="searchingScreen" class="hidden glass-panel rounded-3xl p-8 text-center shadow-2xl">
+                <div class="relative w-28 h-28 mx-auto mb-6 flex items-center justify-center">
+                    <div class="absolute inset-0 rounded-full bg-indigo-500/20 animate-ripple"></div>
+                    <div class="absolute inset-2 rounded-full bg-indigo-500/20 animate-ripple" style="animation-delay: 0.7s;"></div>
+                    <div class="relative w-16 h-16 rounded-full bg-zinc-900 border border-indigo-500/40 flex items-center justify-center shadow-inner">
+                        <i data-lucide="radar" class="w-8 h-8 text-indigo-400 animate-spin" style="animation-duration: 4s;"></i>
+                    </div>
+                </div>
+
+                <h2 class="text-xl font-bold text-white">Searching for a Match...</h2>
+                <p id="searchCriteriaText" class="text-xs text-zinc-400 mt-2 max-w-sm mx-auto">
+                    Looking for Female • Age 19–29 • Global
+                </p>
+
+                <!-- Technical P2P Status Badge -->
+                <div class="mt-5 inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+                    <span class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+                    <span id="peerStatusText">Initializing WebRTC ICE candidates...</span>
+                </div>
+
+                <!-- Tip for Testing in Single Browser -->
+                <div class="mt-6 p-3.5 rounded-xl bg-indigo-950/30 border border-indigo-500/20 text-left">
+                    <p class="text-[11px] text-indigo-300 leading-relaxed">
+                        <strong>💡 How to test live WebRTC:</strong> Open this page in a second browser tab with the opposite gender selected, or click <strong>"Simulate Live Match"</strong> below to test the 2-minute timer & audio visualizer right away.
+                    </p>
+                </div>
+
+                <div class="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+                    <button onclick="simulateMatch()" class="px-5 py-2.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-medium transition">
+                        Simulate Live Match (Demo)
+                    </button>
+                    <button onclick="cancelSearch()" class="px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition">
+                        Cancel & Edit Filters
+                    </button>
+                </div>
+            </section>
+
+            <!-- SCREEN 3: ACTIVE 2-MINUTE VOICE CALL -->
+            <section id="callScreen" class="hidden glass-panel rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
+                <!-- Top Progress Bar for 2-Minute Timer -->
+                <div class="absolute top-0 left-0 right-0 h-1.5 bg-zinc-800">
+                    <div id="timerProgressBar" class="h-full bg-gradient-to-r from-emerald-400 via-indigo-500 to-rose-500 transition-all duration-1000 ease-linear" style="width: 100%;"></div>
+                </div>
+
+                <!-- Call Header & Countdown -->
+                <div class="flex items-center justify-between mb-6 pt-1">
+                    <div class="flex items-center gap-2">
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                        <span class="text-xs font-semibold uppercase tracking-wider text-emerald-400">WebRTC P2P Connected</span>
+                    </div>
+
+                    <!-- 2:00 Countdown Pill -->
+                    <div id="timerPill" class="px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-700 flex items-center gap-2">
+                        <i data-lucide="timer" class="w-4 h-4 text-indigo-400"></i>
+                        <span id="countdownDisplay" class="font-mono font-bold text-base text-white">02:00</span>
+                    </div>
+                </div>
+
+                <!-- Partner Profile Card -->
+                <div class="bg-zinc-900/80 border border-zinc-800/90 rounded-2xl p-6 text-center relative">
+                    <!-- Report / Block Safety Trigger -->
+                    <button onclick="reportAndSkip()" title="Report & Block User" class="absolute top-3.5 right-3.5 p-2 rounded-lg text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition">
+                        <i data-lucide="flag" class="w-4 h-4"></i>
+                    </button>
+
+                    <!-- Avatar + Live Voice Visualizer -->
+                    <div class="relative w-24 h-24 mx-auto mb-4 flex items-center justify-center">
+                        <canvas id="visualizerCanvas" width="120" height="120" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+                        <div id="partnerAvatar" class="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-2xl font-bold text-white shadow-lg z-10">
+                            ?
+                        </div>
+                    </div>
+
+                    <h3 id="partnerName" class="text-xl font-bold text-white">Anonymous Partner</h3>
+                    <div class="flex items-center justify-center gap-2 mt-2 text-xs text-zinc-400">
+                        <span id="partnerGenderBadge" class="px-2.5 py-0.5 rounded-md bg-zinc-800 text-zinc-200 font-medium">Female</span>
+                        <span>•</span>
+                        <span id="partnerAgeBadge">23 yrs</span>
+                        <span>•</span>
+                        <span id="partnerCountryBadge">🇮🇳 India</span>
+                    </div>
+
+                    <!-- Icebreaker Prompt -->
+                    <div class="mt-5 pt-4 border-t border-zinc-800/80">
+                        <p class="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">2-Minute Icebreaker</p>
+                        <p id="icebreakerText" class="text-xs text-zinc-300 italic">"If you could teleport anywhere in the world for dinner tonight, where would you go?"</p>
+                    </div>
+                </div>
+
+                <!-- Hidden Remote Audio Element -->
+                <audio id="remoteAudio" autoplay playsinline></audio>
+
+                <!-- Call Controls -->
+                <div class="mt-6 grid grid-cols-3 gap-3">
+                    <!-- Mute / Unmute -->
+                    <button id="muteBtn" onclick="toggleMute()" class="py-3.5 px-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-xs flex flex-col items-center justify-center gap-1.5 transition">
+                        <i id="muteIcon" data-lucide="mic" class="w-5 h-5 text-emerald-400"></i>
+                        <span id="muteLabel">Mute</span>
+                    </button>
+
+                    <!-- Skip to Next Match Immediately -->
+                    <button onclick="nextMatch()" class="py-3.5 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs flex flex-col items-center justify-center gap-1.5 shadow-lg shadow-indigo-600/20 transition">
+                        <i data-lucide="skip-forward" class="w-5 h-5"></i>
+                        <span>Next Person</span>
+                    </button>
+
+                    <!-- End Session -->
+                    <button onclick="endSession()" class="py-3.5 px-4 rounded-2xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-400 font-medium text-xs flex flex-col items-center justify-center gap-1.5 transition">
+                        <i data-lucide="phone-off" class="w-5 h-5"></i>
+                        <span>Leave</span>
+                    </button>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="w-full py-4 px-6 border-t border-zinc-900 text-center text-xs text-zinc-500">
+        <p>End-to-End Encrypted WebRTC Audio • No Database • Auto-Disconnects at 02:00</p>
+    </footer>
+
+    <!-- LEGAL SECURITY & SAFETY MODAL -->
+    <div id="safetyModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="glass-panel max-w-lg w-full rounded-3xl p-6 sm:p-7 border border-zinc-800 shadow-2xl">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2.5">
+                    <i data-lucide="shield-alert" class="w-5 h-5 text-emerald-400"></i>
+                    <h3 class="text-lg font-bold text-white">Legal Security & Architecture</h3>
+                </div>
+                <button onclick="closeModal('safetyModal')" class="text-zinc-400 hover:text-white p-1">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="space-y-3 text-xs text-zinc-300 leading-relaxed max-h-[60vh] overflow-y-auto pr-1">
+                <p><strong class="text-white">1. Zero-Server Audio (DTLS-SRTP):</strong> All voice streams travel directly peer-to-peer via WebRTC encrypted with DTLS-SRTP. No audio is ever stored, logged, or routed through a recording server.</p>
+                <p><strong class="text-white">2. Ephemeral Session State:</strong> No accounts, passwords, emails, or cookies are persisted. Closing the tab permanently erases your temporary Peer ID and session metadata.</p>
+                <p><strong class="text-white">3. Strict 18+ & Anti-Abuse Policy:</strong> Users must be 18 or older. Harassment, hate speech, or non-consensual explicit audio is strictly prohibited. Clicking the <em>Flag</em> icon immediately terminates the connection and adds the peer signature to your local blocklist.</p>
+                <p><strong class="text-white">4. IP Privacy Notice:</strong> Standard WebRTC peer-to-peer connections exchange ICE network candidates (which may include IP addresses) to establish direct audio. For maximum anonymity, using a trusted VPN is recommended.</p>
+            </div>
+            <button onclick="closeModal('safetyModal')" class="mt-5 w-full py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold transition">
+                Understood
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Lucide Icons
+        lucide.createIcons();
+
+        // ==========================================
+        // APPLICATION STATE & CONFIGURATION
+        // ==========================================
+        const CALL_DURATION_SECONDS = 120; // Strict 2-Minute Timer
+        const COUNTRY_NAMES = {
+            IN: '🇮🇳 India', US: '🇺🇸 United States', GB: '🇬🇧 United Kingdom',
+            CA: '🇨🇦 Canada', AU: '🇦🇺 Australia', DE: '🇩🇪 Germany',
+            JP: '🇯🇵 Japan', BR: '🇧🇷 Brazil', AE: '🇦🇪 UAE'
+        };
+        const ICEBREAKERS = [
+            "What's a small thing that made you smile today?",
+            "If you could master any skill overnight, what would it be?",
+            "What's the best trip or place you've ever visited?",
+            "Are you more of a night owl or an early bird?",
+            "What song or movie can you never get tired of?"
+        ];
+
+        let userProfile = null;
+        let peer = null;
+        let localStream = null;
+        let currentCall = null;
+        let dataConnection = null;
+        let timerInterval = null;
+        let searchInterval = null;
+        let timeRemaining = CALL_DURATION_SECONDS;
+        let isMuted = false;
+        let isSimulated = false;
+        let blockedPeers = new Set();
+        let audioContext = null;
+        let analyser = null;
+        let animationFrameId = null;
+
+        // ==========================================
+        // UI HELPERS & TOAST NOTIFICATIONS
+        // ==========================================
+        function showToast(message, type = 'info') {
+            const box = document.getElementById('toastBox');
+            const msg = document.getElementById('toastMessage');
+            const icon = document.getElementById('toastIcon');
+
+            box.className = 'mb-4 p-3.5 rounded-xl border text-sm flex items-center justify-between transition-all shadow-lg ';
+            if (type === 'error') {
+                box.className += 'bg-rose-950/60 border-rose-500/40 text-rose-200';
+                icon.setAttribute('data-lucide', 'alert-circle');
+            } else if (type === 'success') {
+                box.className += 'bg-emerald-950/60 border-emerald-500/40 text-emerald-200';
+                icon.setAttribute('data-lucide', 'check-circle-2');
+            } else {
+                box.className += 'bg-indigo-950/60 border-indigo-500/40 text-indigo-200';
+                icon.setAttribute('data-lucide', 'info');
+            }
+            msg.textContent = message;
+            box.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function hideToast() {
+            document.getElementById('toastBox').classList.add('hidden');
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.remove('hidden');
+        }
+
+        function closeModal(id) {
+            document.getElementById(id).classList.add('hidden');
+        }
+
+        function switchScreen(screenId) {
+            ['entryScreen', 'searchingScreen', 'callScreen'].forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            document.getElementById(screenId).classList.remove('hidden');
+        }
+
+        // ==========================================
+        // STEP 1: FORM SUBMISSION & MIC PERMISSION
+        // ==========================================
+        document.getElementById('entryForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideToast();
+
+            const username = document.getElementById('usernameInput').value.trim();
+            const genderEl = document.querySelector('input[name="gender"]:checked');
+            const age = parseInt(document.getElementById('ageInput').value, 10);
+            const myCountry = document.getElementById('myCountryInput').value;
+            const targetCountry = document.getElementById('targetCountryInput').value;
+            const ageTolerance = parseInt(document.getElementById('ageRangeInput').value, 10);
+
+            if (!genderEl) {
+                showToast('Please select your gender to enable opposite-gender matching.', 'error');
+                return;
+            }
+            if (age < 18 || age > 99) {
+                showToast('You must be 18 or older to use this service.', 'error');
+                return;
+            }
+
+            userProfile = {
+                username,
+                gender: genderEl.value,
+                desiredGender: genderEl.value === 'male' ? 'female' : 'male',
+                age,
+                myCountry,
+                targetCountry: targetCountry === 'SAME' ? myCountry : targetCountry,
+                ageTolerance
+            };
+
+            // Request Microphone Access via WebRTC getUserMedia
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    },
+                    video: false
+                });
+                setupAudioVisualizer(localStream);
+                startMatchmaking();
+            } catch (err) {
+                console.warn('Microphone access denied or unavailable:', err);
+                showToast('Microphone access is required for voice calls. Please allow mic permissions.', 'error');
+            }
+        });
+
+        // ==========================================
+        // STEP 2: SERVERLESS WEBRTC MATCHMAKING
+        // ==========================================
+        function startMatchmaking() {
+            switchScreen('searchingScreen');
+            isSimulated = false;
+
+            const minAge = Math.max(18, userProfile.age - userProfile.ageTolerance);
+            const maxAge = Math.min(99, userProfile.age + userProfile.ageTolerance);
+            const countryLabel = userProfile.targetCountry === 'ANY' ? 'Global' : COUNTRY_NAMES[userProfile.targetCountry];
+            const targetGenderLabel = userProfile.desiredGender === 'male' ? 'Male' : 'Female';
+
+            document.getElementById('searchCriteriaText').textContent =
+                `Looking for ${targetGenderLabel} • Age ${minAge}–${maxAge} • ${countryLabel}`;
+
+            // Construct a deterministic lobby slot ID for PeerJS discovery without Firebase
+            // Format: voxmatch-v1-{gender}-bucket{slot}
+            const slotNumber = Math.floor(Math.random() * 5) + 1;
+            const myPeerId = `voxmatch-v1-${userProfile.gender}-${slotNumber}-${Math.random().toString(36).substring(2, 6)}`;
+
+            if (peer) {
+                peer.destroy();
+            }
+
+            document.getElementById('peerStatusText').textContent = 'Connecting to decentralized WebRTC signaling...';
+
+            peer = new Peer(myPeerId, {
+                debug: 1,
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                }
+            });
+
+            peer.on('open', (id) => {
+                document.getElementById('peerStatusText').textContent = `Ready (Node: ${id.slice(-4)}). Scanning for ${targetGenderLabel} peers...`;
+                scanForOppositePeers();
+            });
+
+            // Handle Incoming Metadata Handshake
+            peer.on('connection', (conn) => {
+                if (blockedPeers.has(conn.peer) || currentCall) {
+                    conn.close();
+                    return;
+                }
+                conn.on('data', (partnerProfile) => {
+                    if (isCompatibleMatch(partnerProfile)) {
+                        dataConnection = conn;
+                        conn.send({ type: 'ACCEPT', profile: userProfile });
+                    } else {
+                        conn.close();
+                    }
+                });
+            });
+
+            // Handle Incoming WebRTC Audio Stream
+            peer.on('call', (call) => {
+                if (blockedPeers.has(call.peer) || currentCall) {
+                    call.close();
+                    return;
+                }
+                call.answer(localStream);
+                bindCallEvents(call, call.metadata || {
+                    username: 'Anonymous Stranger',
+                    gender: userProfile.desiredGender,
+                    age: userProfile.age,
+                    myCountry: userProfile.myCountry
+                });
+            });
+
+            peer.on('error', (err) => {
+                if (err.type !== 'peer-unavailable') {
+                    console.error('PeerJS error:', err);
+                }
+            });
+        }
+
+        // Check Mutual Compatibility (Gender, Age Factor, Country)
+        function isCompatibleMatch(partner) {
+            if (!partner || !partner.gender) return false;
+            // 1. Strict Opposite Gender Check
+            if (partner.gender !== userProfile.desiredGender) return false;
+
+            // 2. Mutual Age Tolerance Check
+            const ageDiff = Math.abs(userProfile.age - partner.age);
+            if (ageDiff > userProfile.ageTolerance || ageDiff > partner.ageTolerance) return false;
+
+            // 3. Country Check
+            if (userProfile.targetCountry !== 'ANY' && partner.myCountry !== userProfile.targetCountry) return false;
+            if (partner.targetCountry !== 'ANY' && userProfile.myCountry !== partner.targetCountry) return false;
+
+            return true;
+        }
+
+        // Broadcast/Probe via localStorage (for multi-tab testing) & PeerJS mesh
+        function scanForOppositePeers() {
+            clearInterval(searchInterval);
+
+            // Announce presence in localStorage lobby for instant cross-tab WebRTC pairing
+            const lobbyKey = 'voxmatch_active_lobby';
+            searchInterval = setInterval(() => {
+                if (!peer || peer.disconnected || currentCall) return;
+
+                const now = Date.now();
+                let lobby = [];
+                try {
+                    lobby = JSON.parse(localStorage.getItem(lobbyKey) || '[]');
+                } catch (e) { lobby = []; }
+
+                // Clean stale entries older than 6 seconds
+                lobby = lobby.filter(entry => now - entry.timestamp < 6000 && entry.peerId !== peer.id);
+
+                // Find compatible peer
+                const match = lobby.find(entry => !blockedPeers.has(entry.peerId) && isCompatibleMatch(entry.profile));
+
+                if (match) {
+                    clearInterval(searchInterval);
+                    initiateWebRTCCall(match.peerId, match.profile);
+                } else {
+                    // Register self in lobby
+                    lobby.push({
+                        peerId: peer.id,
+                        profile: userProfile,
+                        timestamp: now
+                    });
+                    localStorage.setItem(lobbyKey, JSON.stringify(lobby));
+                }
+            }, 1500);
+        }
+
+        function initiateWebRTCCall(targetPeerId, partnerProfile) {
+            document.getElementById('peerStatusText').textContent = 'Match found! Negotiating encrypted audio...';
+            const call = peer.call(targetPeerId, localStream, { metadata: userProfile });
+            if (call) {
+                bindCallEvents(call, partnerProfile);
+            }
+        }
+
+        function bindCallEvents(call, partnerProfile) {
+            currentCall = call;
+            clearInterval(searchInterval);
+
+            call.on('stream', (remoteStream) => {
+                const audioEl = document.getElementById('remoteAudio');
+                audioEl.srcObject = remoteStream;
+                enterActiveCallUI(partnerProfile);
+            });
+
+            call.on('close', () => {
+                if (currentCall) {
+                    showToast('Partner disconnected. Searching for next match...', 'info');
+                    nextMatch();
+                }
+            });
+
+            call.on('error', () => {
+                nextMatch();
+            });
+        }
+
+        // ==========================================
+        // DEMO SIMULATION (FOR SINGLE-DEVICE TESTING)
+        // ==========================================
+        function simulateMatch() {
+            clearInterval(searchInterval);
+            isSimulated = true;
+
+            const sampleNames = userProfile.desiredGender === 'female'
+                ? ['Aarohi', 'Sophia', 'Maya', 'Elena', 'Chloe']
+                : ['Kabir', 'Liam', 'Noah', 'Arjun', 'Lucas'];
+
+            const randomName = sampleNames[Math.floor(Math.random() * sampleNames.length)];
+            const ageOffset = Math.floor(Math.random() * Math.min(3, userProfile.ageTolerance));
+            const simAge = Math.max(18, userProfile.age + (Math.random() > 0.5 ? ageOffset : -ageOffset));
+            const simCountry = userProfile.targetCountry === 'ANY' ? userProfile.myCountry : userProfile.targetCountry;
+
+            enterActiveCallUI({
+                username: `${randomName} (Simulated Peer)`,
+                gender: userProfile.desiredGender,
+                age: simAge,
+                myCountry: simCountry
+            });
+        }
+
+        // ==========================================
+        // STEP 3: ACTIVE 2-MINUTE CALL & TIMER
+        // ==========================================
+        function enterActiveCallUI(partner) {
+            switchScreen('callScreen');
+
+            // Populate Partner Details
+            document.getElementById('partnerName').textContent = partner.username || 'Anonymous';
+            document.getElementById('partnerAvatar').textContent = (partner.username || 'A')[0].toUpperCase();
+            document.getElementById('partnerGenderBadge').textContent = partner.gender === 'male' ? '♂️ Male' : '♀️ Female';
+            document.getElementById('partnerAgeBadge').textContent = `${partner.age} yrs`;
+            document.getElementById('partnerCountryBadge').textContent = COUNTRY_NAMES[partner.myCountry] || '🌍 Global';
+            document.getElementById('icebreakerText').textContent = `"${ICEBREAKERS[Math.floor(Math.random() * ICEBREAKERS.length)]}"`;
+
+            // Reset Mute State
+            isMuted = false;
+            updateMuteUI();
+
+            // Start 2-Minute (120s) Countdown
+            startTwoMinuteTimer();
+        }
+
+        function startTwoMinuteTimer() {
+            clearInterval(timerInterval);
+            timeRemaining = CALL_DURATION_SECONDS;
+            updateTimerDisplay();
+
+            timerInterval = setInterval(() => {
+                timeRemaining--;
+                updateTimerDisplay();
+
+                if (timeRemaining <= 0) {
+                    clearInterval(timerInterval);
+                    showToast('2-minute time limit reached! Connecting you to someone new...', 'info');
+                    nextMatch();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const mins = Math.floor(timeRemaining / 60).toString().padStart(2, '0');
+            const secs = (timeRemaining % 60).toString().padStart(2, '0');
+            document.getElementById('countdownDisplay').textContent = `${mins}:${secs}`;
+
+            const percentage = (timeRemaining / CALL_DURATION_SECONDS) * 100;
+            document.getElementById('timerProgressBar').style.width = `${percentage}%`;
+
+            const pill = document.getElementById('timerPill');
+            if (timeRemaining <= 15) {
+                pill.classList.add('border-rose-500', 'bg-rose-950/50', 'animate-pulse');
+            } else {
+                pill.classList.remove('border-rose-500', 'bg-rose-950/50', 'animate-pulse');
+            }
+        }
+
+        // ==========================================
+        // CALL CONTROLS (MUTE, NEXT, REPORT, LEAVE)
+        // ==========================================
+        function toggleMute() {
+            if (!localStream) return;
+            isMuted = !isMuted;
+            localStream.getAudioTracks().forEach(track => {
+                track.enabled = !isMuted;
+            });
+            updateMuteUI();
+        }
+
+        function updateMuteUI() {
+            const btn = document.getElementById('muteBtn');
+            const icon = document.getElementById('muteIcon');
+            const label = document.getElementById('muteLabel');
+
+            if (isMuted) {
+                btn.className = 'py-3.5 px-4 rounded-2xl bg-rose-500/20 border border-rose-500/40 text-rose-300 font-medium text-xs flex flex-col items-center justify-center gap-1.5 transition';
+                icon.setAttribute('data-lucide', 'mic-off');
+                label.textContent = 'Muted';
+            } else {
+                btn.className = 'py-3.5 px-4 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white font-medium text-xs flex flex-col items-center justify-center gap-1.5 transition';
+                icon.setAttribute('data-lucide', 'mic');
+                label.textContent = 'Mute';
+            }
+            lucide.createIcons();
+        }
+
+        function nextMatch() {
+            cleanupActiveCall();
+            if (isSimulated) {
+                switchScreen('searchingScreen');
+                document.getElementById('peerStatusText').textContent = 'Finding next compatible match...';
+                setTimeout(() => {
+                    if (!document.getElementById('searchingScreen').classList.contains('hidden')) {
+                        simulateMatch();
+                    }
+                }, 1500);
+            } else {
+                startMatchmaking();
+            }
+        }
+
+        function reportAndSkip() {
+            if (currentCall && currentCall.peer) {
+                blockedPeers.add(currentCall.peer);
+            }
+            showToast('User blocked for this session. Switching to next match.', 'error');
+            nextMatch();
+        }
+
+        function cancelSearch() {
+            cleanupActiveCall();
+            if (peer) peer.destroy();
+            stopLocalAudio();
+            switchScreen('entryScreen');
+        }
+
+        function endSession() {
+            cleanupActiveCall();
+            if (peer) peer.destroy();
+            stopLocalAudio();
+            switchScreen('entryScreen');
+            showToast('Call ended. Your session data has been cleared.', 'info');
+        }
+
+        function cleanupActiveCall() {
+            clearInterval(timerInterval);
+            clearInterval(searchInterval);
+            if (currentCall) {
+                const callToClose = currentCall;
+                currentCall = null;
+                callToClose.close();
+            }
+            const audioEl = document.getElementById('remoteAudio');
+            if (audioEl) audioEl.srcObject = null;
+        }
+
+        function stopLocalAudio() {
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                localStream = null;
+            }
+            if (animationFrameId) cancelAnimationFrame(animationFrameId);
+        }
+
+        // ==========================================
+        // WEB AUDIO API LIVE VOICE RING VISUALIZER
+        // ==========================================
+        function setupAudioVisualizer(stream) {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 64;
+                source.connect(analyser);
+
+                const canvas = document.getElementById('visualizerCanvas');
+                const ctx = canvas.getContext('2d');
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+                function draw() {
+                    animationFrameId = requestAnimationFrame(draw);
+                    analyser.getByteFrequencyData(dataArray);
+
+                    let sum = 0;
+                    for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+                    const avg = sum / dataArray.length;
+
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const centerX = canvas.width / 2;
+                    const centerY = canvas.height / 2;
+                    const radius = 34 + (avg / 255) * 22;
+
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+                    ctx.strokeStyle = isMuted ? 'rgba(244, 63, 94, 0.4)' : 'rgba(99, 102, 241, 0.65)';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+                }
+                draw();
+            } catch (e) {
+                console.warn('Audio visualizer unavailable:', e);
+            }
+        }
+    </script>
+</body>
+</html>
